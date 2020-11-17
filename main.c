@@ -36,15 +36,21 @@ typedef struct MsgQueue {
   int used;
 } MsgQueue;
 
-int request_cs(Proc* proc);
-int enter_cs(Proc* proc); // in cs
-int exit_cs(Proc* proc);
+int request_cs(Proc*);
+int enter_cs(Proc*); // in cs
+int exit_cs(Proc*);
 
-int send(Proc* proc, Msg* msg); // send msg to proc
-int handle(Proc* proc, Msg* msg); // proc - target
-int send_all(Msg* msg, Proc* proc); // msg, sender
+int send(Proc*, Msg*); // send msg to proc
+int handle(Proc*, Msg*); // proc - target
+int send_all(Msg*, Proc*); // msg, sender
 
-int time(int add);
+MsgQueue* create_queue(void);
+int queue(MsgQueue*, Msg*);
+Msg* dequeue(MsgQueue*);
+
+int time(int);
+bool toss(int);
+void tick(void); // run the world!
 
 // globals
 
@@ -53,11 +59,20 @@ int procs_len;
 
 int main(void) {
 
+  srand(time(NULL));
+
+  /* 
+  tests:
+  
+
+  
+  */
+
   // free memory
 
   for (int i = 0; i < procs_len; i++) {
     Proc* curr = procs[i];
-    free(procs[i]->queue->list);
+    free(curr->queue->list);
   }
 
   return 0;
@@ -189,3 +204,31 @@ Msg* dequeue(MsgQueue* queue) {
   return NULL;
 }
 
+bool toss(int k) {
+  return (rand()/RAND_MAX < 1/k) ? true : false;
+}
+
+void tick(void) {
+  for (int i = 0; i < procs_len; i++) {
+    Proc* curr = procs[i];
+    
+    switch (curr->state){
+    case normal:
+      if (toss(5)) request_cs(curr);
+      break;
+
+    case awaiting:
+      // 
+      break;
+
+    case in_cs:
+      if (toss(2)) exit_cs(curr);
+      break;
+    
+    default:
+      break;
+    }
+  }
+
+  time(1); // the times / they are a-changing
+}
