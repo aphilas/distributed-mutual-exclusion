@@ -33,9 +33,11 @@ typedef struct Msg {
 } Msg;
 
 typedef struct MsgQueue {
-  struct Msg** list; // list[Msg*]
+  struct Proc** list; // list[Proc*]
   int size;
   int used;
+  int front;
+  int rear;
 } MsgQueue;
 
 int request_cs(Proc*);
@@ -47,8 +49,8 @@ int handle(Proc*, Msg*); // proc - target
 int send_all(Msg*, Proc*); // msg, sender
 
 int create_queue(MsgQueue*);
-int queue(MsgQueue*, Msg*);
-Msg* dequeue(MsgQueue*);
+int enqueue(MsgQueue* queue, Proc* proc);
+Proc* dequeue(MsgQueue* queue);
 
 int get_time(int);
 bool toss(int);
@@ -105,6 +107,7 @@ int enter_cs(Proc* proc) {
 
 int exit_cs(Proc* proc) {
   Msg msg;
+  Proc* p1;
 
   msg.type = ok;
   msg.proc = proc;
@@ -112,12 +115,12 @@ int exit_cs(Proc* proc) {
 
   proc->state = normal;
 
-  // printf("top of queue: p%d\n", proc->queue->list[0]->proc->pid);
-  proc->queue->list[0]->proc->pid;
+  // printf("p%d top of queue: p%d\n", proc->pid, proc->queue->list[proc->queue->front]->proc->pid);
 
   for (int i = 0; i < proc->queue->used; i++) {
-    send(dequeue(proc->queue)->proc, &msg);
-    // printf("Sent p%d ok\n", q_msg->proc->pid);
+    p1 = dequeue(proc->queue);
+    send(p1, &msg);
+    printf("Sent p%d ok\n", p1->pid);
   }
 }
 
@@ -143,7 +146,7 @@ int send_all(Msg* msg, Proc* proc) { // proc is sender
 int handle(Proc* proc, Msg* msg) {
   Msg ok_msg;
 
-  // printf("%d received msg of type %d from %d\n", proc->pid, msg->type, msg->proc->pid);
+  // printf("p%d received msg of type %d from p%d\n", proc->pid, msg->type, msg->proc->pid);
 
   ok_msg.type = ok;
   ok_msg.proc = proc;
@@ -155,16 +158,17 @@ int handle(Proc* proc, Msg* msg) {
         send(msg->proc, &ok_msg); // reply with ok
         break;
       case in_cs:
-        printf("p%d attempted to queue p%d\n", proc->pid, msg->proc->pid);
-        queue(proc->queue, msg);
+        // printf("p%d attempted to queue p%d\n", proc->pid, msg->proc->pid);
+        enqueue(proc->queue, msg->proc);
         break;
       case awaiting:
         if (msg->time < proc->last_msg->time) {
           send(msg->proc, &ok_msg);
         } else {
-          printf("p%d attempted to queue p%d\n", proc->pid, msg->proc->pid);
-          queue(proc->queue, msg);
+          // printf("p%d attempted to queue p%d\n", proc->pid, msg->proc->pid);
+          enqueue(proc->queue, msg->proc);
         }
+        break;
     }
   } else { // ok
     // printf("p%d recieved ok from %d\n", proc->pid, msg->proc->pid);
@@ -173,7 +177,10 @@ int handle(Proc* proc, Msg* msg) {
     // printf("p%d, state: %d, oks: %d\n", proc->pid, proc->state, proc->oks);
 
     // all procs responded
-    if (proc->oks == NO_OF_PROCS - 1) enter_cs(proc);
+    if (proc->oks == NO_OF_PROCS - 1) {
+      printf("p%d can now enter cs\n", proc->pid);
+      enter_cs(proc);
+    }
   }
 }
 
@@ -184,41 +191,48 @@ int get_time(int add) { // *
   return current_time;
 }
 
-int create_queue(MsgQueue* msg_queue) {
+int create_queue(MsgQueue* queue) {
   // list[Msg*]
-  msg_queue->list = (Msg**) malloc(sizeof(Msg*) * QUEUE_BASE_SIZE); // arr of messages
-  msg_queue->size = QUEUE_BASE_SIZE;
-  msg_queue->used = 0;
+  queue->list = (Proc**) malloc(sizeof(Proc*) * QUEUE_BASE_SIZE); // arr of messages
+  queue->size = QUEUE_BASE_SIZE;
+  queue->used = 0;
+  queue->rear = -1;
+  queue->front = -1;
   return 0;
 }
 
-int queue(MsgQueue* queue, Msg* msg) {
+int enqueue(MsgQueue* queue, Proc* proc) {
   if (queue->used >= queue->size) { // queue full
-    queue->list = (Msg**) realloc(queue->list, sizeof(Msg*) * (queue->size * 2)); // double size of list
+    queue->list = (Proc**) realloc(queue->list, sizeof(Proc*) * (queue->size * 2)); // double size of list
     queue->size *= 2;
   } 
 
-  queue->list[queue->used] = msg;
+  if (queue->used == 0) queue->front = 0;
+  queue->rear = (queue->rear + 1) % (queue->size);
+  queue->list[queue->rear] = proc;
   queue->used += 1;
-
-  // printf("Inserted p%d. Used: %d, size: %d.\n", queue->list[queue->used - 1]->proc->pid, queue->used, queue->size);
 
   return 0;
 }
 
-Msg* dequeue(MsgQueue* queue) {
-  Msg* top;
-  if (queue->used > 0) {
-    top = queue->list[0];
-    queue->list[0] = NULL;
+Proc* dequeue(MsgQueue* queue) {
+  Proc* top;
+
+  if (queue->used == 0) {
+    printf("queue is empty\n");
+    return NULL;
+  } else if (queue->used == 1) {
+    top = queue->list[queue->front];
+    queue->rear = -1;
+    queue->front = -1;
     queue->used -= 1;
-
-    // printf("dequeued p%d", top->proc)
-
+    return top;
+  } else {
+    top = queue->list[queue->front];
+    queue->front = (queue->front + 1) % (queue->size);
+    queue->used -= 1;
     return top;
   }
-
-  return NULL;
 }
 
 bool toss(int k) {
@@ -233,6 +247,11 @@ void prt_if(ProcState state) {
 }
 
 void tick(void) {
+  printf("time %d:\n", get_time(0));
+  printf(" normal: "); prt_if(normal);
+  printf(" awaiting: "); prt_if(awaiting);
+  printf(" cs: "); prt_if(in_cs);
+
   for (int i = 0; i < NO_OF_PROCS; i++) {
     Proc* curr = &procs[i];
     
@@ -253,11 +272,6 @@ void tick(void) {
       break;
     }
   }
-
-  printf("time %d:\n", get_time(0));
-  printf(" normal: "); prt_if(normal);
-  printf(" awaiting: "); prt_if(awaiting);
-  printf(" cs: "); prt_if(in_cs);
 
   get_time(1); // the times / they are a-changing
 }
